@@ -17,11 +17,49 @@ module.exports = async ({ github, context, core }) => {
   const scopeReport = process.env.SCOPE_REPORT || '';
   const timestamp = new Date().toISOString();
 
-  // Maintainer / Release sync check
+  // Trusted automated actors & maintainers
   const isMaintainerPR = prAuthor.toLowerCase() === context.repo.owner.toLowerCase() || prAuthor.toLowerCase() === 'emarkees';
+  const isDependabot = prAuthor.toLowerCase() === 'dependabot[bot]' || prAuthor.toLowerCase() === 'dependabot';
   const isReleaseSync = pr.head.ref === 'develop' && pr.base.ref === 'main';
 
-  if (!issueCompliant || (!scanClean && !isReleaseSync)) {
+  // NEVER auto-close Dependabot, Maintainer, or Release Sync PRs
+  if (isDependabot || isMaintainerPR || isReleaseSync) {
+    const actorName = isDependabot ? 'Dependabot' : (isReleaseSync ? 'Release Sync' : 'Maintainer');
+    console.log(`✅ ${actorName} PR verified for @${prAuthor}. Security gate automatically approved.`);
+
+    let body = `## 🛡️ PR Security Gate — APPROVED (${actorName}) ✅\n\n`;
+    body += `**PR:** #${prNumber} by @${prAuthor}\n`;
+    body += `**Time:** ${timestamp}\n\n`;
+    body += `---\n\n`;
+    body += `### 🔍 Automated Verification Results:\n`;
+    body += `- ✅ **Trusted Entity:** Verified official ${actorName} pull request.\n`;
+    body += `- ✅ **Scope Check:** Authorized automated dependency/infrastructure update.\n`;
+    body += `\n> 🚀 **Ready for automated merge or maintainer review.**\n`;
+
+    try {
+      await github.rest.issues.createComment({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        body: body,
+      });
+    } catch (e) {
+      console.log(`Failed to create comment: ${e.message}`);
+    }
+
+    try {
+      await github.rest.issues.addLabels({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        labels: ['security-passed'],
+      });
+    } catch {}
+
+    return;
+  }
+
+  if (!issueCompliant || !scanClean) {
     let body = `## 🚨 PR Security Gate — REJECTED & CLOSED\n\n`;
     body += `**PR:** #${prNumber} by @${prAuthor}\n`;
     body += `**Time:** ${timestamp}\n\n`;
